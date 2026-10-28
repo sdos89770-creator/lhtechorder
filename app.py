@@ -3,8 +3,22 @@ import os
 import pandas as pd
 import streamlit as st
 
-# 초기 기본 명단 (새로운 날짜에 처음 들어갔을 때 기본으로 세팅되는 명단)
+# 초기 기본 명단
 DEFAULT_WORKERS = ["김철수", "이영희", "박민수", "정지영", "오민석", "김도현"]
+
+# 선택 가능한 식사 메뉴 리스트 (원하시는 만큼 추가하거나 빼셔도 됩니다!)
+AVAILABLE_MENUS = [
+    "짜장면",
+    "간짜장",
+    "짬뽕",
+    "짬뽕밥",
+    "볶음밥",
+    "새우볶음밥",
+    "잡채밥",
+    "우동",
+    "짬뽕+공기밥",
+    "기타(직접입력)",
+]
 
 # 관리자 비밀번호 설정
 ADMIN_PASSWORD = "0007"
@@ -19,12 +33,10 @@ def get_data_file_path(date_obj):
 def load_data(date_obj):
     data_file = get_data_file_path(date_obj)
     
-    # 1. 세션 상태에 이미 해당 날짜 데이터가 있으면 메모리 값을 우선 사용 (새로고침/상태 유지 핵심)
     data_key = f"df_data_{date_obj.strftime('%Y-%m-%d')}"
     if data_key in st.session_state:
         return st.session_state[data_key]
 
-    # 2. 파일이 존재하면 읽어오기
     if os.path.exists(data_file):
         try:
             df = pd.read_csv(data_file, encoding="utf-8-sig")
@@ -39,7 +51,6 @@ def load_data(date_obj):
             os.remove(data_file)
             return load_data(date_obj)
     else:
-        # 3. 파일이 없으면 기본 명단으로 새로 생성
         initial_data = {
             "이름": DEFAULT_WORKERS,
             "메뉴 선택": [""] * len(DEFAULT_WORKERS),
@@ -55,7 +66,7 @@ def load_data(date_obj):
 st.set_page_config(page_title="잔업 식사 주문 시스템", page_icon="🍱", layout="centered")
 
 st.title("🍱 이화테크원 잔업근무 식사 주문")
-st.write("날짜를 선택하고 본인 이름과 메뉴를 입력해 주세요! :red[(메뉴 이름만!!)]")
+st.write("날짜를 선택하고 본인 이름과 메뉴, 곱배기 여부를 선택해 주세요!")
 
 # --- 날짜 선택 및 요일 설정 ---
 days_of_week = ["월", "화", "수", "목", "금", "토", "일"]
@@ -69,7 +80,7 @@ formatted_date_str = (
 
 st.info(f"📌 현재 선택된 주문 일자: **{formatted_date_str}**")
 
-# 선택된 날짜에 해당하는 데이터 불러오기 (세션 및 파일 연동)
+# 선택된 날짜에 해당하는 데이터 불러오기
 data_key = f"df_data_{selected_date.strftime('%Y-%m-%d')}"
 df = load_data(selected_date)
 current_data_file = get_data_file_path(selected_date)
@@ -78,7 +89,6 @@ current_data_file = get_data_file_path(selected_date)
 st.sidebar.header("⚙️ 관리자 설정")
 admin_mode = st.sidebar.checkbox("관리자 모드 켜기")
 
-# 관리자 인증 여부를 체크하기 위한 변수
 is_authenticated = False
 
 if admin_mode:
@@ -98,7 +108,6 @@ if admin_mode and is_authenticated:
 
     current_names = "\n".join(df["이름"].tolist())
     
-    # 텍스트 에어리어 고유 키 관리
     admin_text_key = f"admin_names_{selected_date}"
     if admin_text_key not in st.session_state:
         st.session_state[admin_text_key] = current_names
@@ -127,7 +136,6 @@ if admin_mode and is_authenticated:
             df["이름"] = df["이름"].astype(str)
             df["메뉴 선택"] = df["메뉴 선택"].astype(str)
             
-            # 세션 스테이트와 CSV 파일 모두에 즉시 반영
             st.session_state[data_key] = df
             df.to_csv(current_data_file, index=False, encoding="utf-8-sig")
             
@@ -145,9 +153,9 @@ if admin_mode and is_authenticated:
         st.rerun()
 
 
-# 1. 작업자 주문 입력 섹션
-st.subheader("✍️ 내 메뉴 입력하기")
-worker_names = df["이름"].tolist()
+# 1. 작업자 주문 입력(선택) 섹션
+st.subheader("✍️ 내 메뉴 선택하기")
+worker_names = df["is_worker" if "is_worker" in df.columns else "이름"].tolist() if "이름" in df.columns else []
 
 if not worker_names:
     st.warning(
@@ -159,28 +167,62 @@ else:
 
     # 현재 선택된 사용자의 기존 메뉴 가져오기
     current_row = df.loc[df["이름"] == selected_name]
-    current_menu = (
+    current_menu_raw = (
         str(current_row["메뉴 선택"].values[0]) if not current_row.empty else ""
     )
-    if current_menu == "nan" or pd.isna(current_menu):
-        current_menu = ""
+    if current_menu_raw == "nan" or pd.isna(current_menu_raw):
+        current_menu_raw = ""
 
-    input_key = f"menu_input_{selected_date}_{selected_name}"
+    # 기존 저장된 데이터에서 메뉴 이름과 곱배기 여부 분리하기
+    # 예: "짜장면 (곱배기)" -> 메뉴: "짜장면", 곱배기: True
+    is_gopbaegi_default = "(곱배기)" in current_menu_raw
+    pure_menu = current_menu_raw.replace(" (곱배기)", "").strip()
+
+    # 기본 메뉴 인덱스 찾기
+    default_index = 0
+    if pure_menu in AVAILABLE_MENUS:
+        default_index = AVAILABLE_MENUS.index(pure_menu)
+    elif pure_menu != "":
+        if "기타(직접입력)" in AVAILABLE_MENUS:
+            default_index = AVAILABLE_MENUS.index("기타(직접입력)")
+
+    # 화면 배치: 메뉴 선택과 곱배기 체크박스를 나란히 배치
+    col1, col2 = st.columns([3, 1])
     
-    if input_key not in st.session_state:
-        st.session_state[input_key] = current_menu
+    with col1:
+        selected_menu_option = st.selectbox(
+            "드실 메뉴를 선택하세요",
+            options=AVAILABLE_MENUS,
+            index=default_index,
+            key=f"menu_select_{selected_date}_{selected_name}"
+        )
+        
+    with col2:
+        st.write("") # 간격 맞추기용
+        st.write("")
+        is_gopbaegi = st.checkbox("곱배기 (+)", value=is_gopbaegi_default, key=f"gopbaegi_check_{selected_date}_{selected_name}")
 
-    input_menu = st.text_input(
-        "메뉴를 자유롭게 입력하세요 (예: 짜장면, 짬뽕, 볶음밥)",
-        key=input_key,
-    )
+    # 기타 직접 입력 처리
+    final_menu_name = selected_menu_option
+    if selected_menu_option == "기타(직접입력)":
+        custom_input = st.text_input("직접 메뉴를 입력해주세요", value="" if pure_menu in AVAILABLE_MENUS else pure_menu, key=f"custom_menu_{selected_date}_{selected_name}")
+        final_menu_name = custom_input
+
+    # 최종 저장될 문자열 조합 (곱배기가 체크되어 있으면 " (곱배기)" 붙이기)
+    if final_menu_name and final_menu_name.strip() != "":
+        if is_gopbaegi:
+            final_menu_to_save = f"{final_menu_name} (곱배기)"
+        else:
+            final_menu_to_save = final_menu_name
+    else:
+        final_menu_to_save = ""
 
     if st.button("내 주문 저장하기"):
-        df.loc[df["이름"] == selected_name, "메뉴 선택"] = str(st.session_state[input_key])
+        df.loc[df["이름"] == selected_name, "메뉴 선택"] = str(final_menu_to_save)
         st.session_state[data_key] = df
         df.to_csv(current_data_file, index=False, encoding="utf-8-sig")
         st.success(
-            f"[{formatted_date_str}] [{selected_name}]님의 메뉴가 저장되었습니다!"
+            f"[{formatted_date_str}] [{selected_name}]님의 메뉴([{final_menu_to_save}])가 저장되었습니다!"
         )
         st.rerun()
 
@@ -188,7 +230,6 @@ else:
 st.markdown("---")
 st.subheader(f"📊 {formatted_date_str} 잔업 식사 현황 전체보기")
 
-# 파일과 세션 데이터 중 최신 상태 유지
 if os.path.exists(current_data_file):
     current_df = pd.read_csv(current_data_file, encoding="utf-8-sig")
 else:
@@ -208,7 +249,7 @@ for idx, row in current_df.iterrows():
     if menu and menu != "nan" and menu.strip() != "":
         valid_orders.append((row["이름"], menu.strip()))
 
-# 메뉴별 개수 카운팅 집계
+# 메뉴별 개수 카운팅 집계 (곱배기 포함된 이름 그대로 집계됨)
 menu_counts = {}
 for name, menu in valid_orders:
     menu_counts[menu] = menu_counts.get(menu, 0) + 1
