@@ -6,6 +6,9 @@ import streamlit as st
 # 초기 기본 명단 (새로운 날짜에 처음 들어갔을 때 기본으로 세팅되는 명단)
 DEFAULT_WORKERS = ["김철수", "이영희", "박민수", "정지영", "오민석", "김도현"]
 
+# 관리자 비밀번호 설정
+ADMIN_PASSWORD = "0007"
+
 
 def get_data_file_path(date_obj):
     """선택된 날짜에 해당하는 개별 CSV 파일 이름을 반환합니다."""
@@ -75,7 +78,19 @@ current_data_file = get_data_file_path(selected_date)
 st.sidebar.header("⚙️ 관리자 설정")
 admin_mode = st.sidebar.checkbox("관리자 모드 켜기")
 
+# 관리자 인증 여부를 체크하기 위한 변수
+is_authenticated = False
+
 if admin_mode:
+    password_input = st.sidebar.text_input("관리자 비밀번호를 입력하세요", type="password")
+    
+    if password_input == ADMIN_PASSWORD:
+        is_authenticated = True
+        st.sidebar.success("관리자 인증 성공!")
+    elif password_input != "":
+        st.sidebar.error("비밀번호가 틀렸습니다.")
+
+if admin_mode and is_authenticated:
     st.sidebar.subheader(
         f"👥 [{selected_date.strftime('%m/%d')}] 근무자 명단 관리"
     )
